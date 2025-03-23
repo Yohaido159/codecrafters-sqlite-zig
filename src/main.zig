@@ -1,5 +1,31 @@
 const std = @import("std");
 
+const stdout = std.io.getStdOut().writer();
+const stderr = std.io.getStdErr().writer();
+
+const DBInfo = struct {
+    page_size: u16,
+    table_count: u16,
+
+    fn read(file: std.fs.File) !DBInfo {
+        var buf: [2]u8 = undefined;
+        _ = try file.seekTo(16);
+        _ = try file.read(&buf);
+        const page_size = std.mem.readInt(u16, &buf, .big);
+        // header of b tree
+        _ = try file.seekTo(100);
+
+        // count of cell = tables
+        _ = try file.seekBy(3);
+
+        var table_count_buf: [2]u8 = undefined;
+        _ = try file.read(&table_count_buf);
+        const table_count = std.mem.readInt(u16, &table_count_buf, .big);
+
+        return DBInfo{ .page_size = page_size, .table_count = table_count };
+    }
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -9,7 +35,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 3) {
-        try std.io.getStdErr().writer().print("Usage: {s} <database_file_path> <command>\n", .{args[0]});
+        try stderr.print("Usage: {s} <database_file_path> <command>\n", .{args[0]});
         return;
     }
 
@@ -20,14 +46,9 @@ pub fn main() !void {
         var file = try std.fs.cwd().openFile(database_file_path, .{});
         defer file.close();
 
-        // You can use print statements as follows for debugging, they'll be visible when running tests.
-        std.debug.print("Logs from your program will appear here!\n", .{});
-
+        const info = try DBInfo.read(file);
+        try stdout.print("database page size: {}\n", .{info.page_size});
+        try stdout.print("number of tables: {}\n", .{info.table_count});
         // Uncomment this block to pass the first stage
-        var buf: [2]u8 = undefined;
-        _ = try file.seekTo(16);
-        _ = try file.read(&buf);
-        const page_size = std.mem.readInt(u16, &buf, .big);
-        try std.io.getStdOut().writer().print("database page size: {}\n", .{page_size});
     }
 }
