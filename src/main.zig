@@ -3,28 +3,10 @@ const std = @import("std");
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
-const DBInfo = struct {
-    page_size: u16,
-    table_count: u16,
+const assert = std.debug.assert;
 
-    fn read(file: std.fs.File) !DBInfo {
-        var buf: [2]u8 = undefined;
-        _ = try file.seekTo(16);
-        _ = try file.read(&buf);
-        const page_size = std.mem.readInt(u16, &buf, .big);
-        // header of b tree
-        _ = try file.seekTo(100);
-
-        // count of cell = tables
-        _ = try file.seekBy(3);
-
-        var table_count_buf: [2]u8 = undefined;
-        _ = try file.read(&table_count_buf);
-        const table_count = std.mem.readInt(u16, &table_count_buf, .big);
-
-        return DBInfo{ .page_size = page_size, .table_count = table_count };
-    }
-};
+const DBHeader = @import("db-info.zig").DBHeader;
+const Page = @import("page.zig").Page;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -42,13 +24,36 @@ pub fn main() !void {
     const database_file_path: []const u8 = args[1];
     const command: []const u8 = args[2];
 
-    if (std.mem.eql(u8, command, ".dbinfo")) {
-        var file = try std.fs.cwd().openFile(database_file_path, .{});
-        defer file.close();
+    var file = try std.fs.cwd().openFile(database_file_path, .{});
+    defer file.close();
 
-        const info = try DBInfo.read(file);
-        try stdout.print("database page size: {}\n", .{info.page_size});
-        try stdout.print("number of tables: {}\n", .{info.table_count});
-        // Uncomment this block to pass the first stage
+    const db_header = try DBHeader.init(file);
+    const header_offset = 100;
+    const content_offset = db_header.content_offset;
+    const cell_offsets = db_header.cell_offsets;
+
+    const buffer = try allocator.alloc(u8, db_header.page_size);
+    defer allocator.free(buffer);
+    _ = try file.preadAll(buffer, 0);
+    const page = try Page.init(db_header.page_size, header_offset, content_offset, cell_offsets, buffer, allocator);
+    defer {
+        page.deinit(allocator) catch {
+            unreachable;
+        };
+    }
+
+    if (std.mem.eql(u8, command, ".dbinfo")) {
+        try stdout.print("database page size: {any}\n", .{db_header.page_size});
+        try stdout.print("number of tables: {any}\n", .{db_header.table_count});
+    }
+
+    if (std.mem.eql(u8, command, ".tables")) {
+        for (page.content.rows) |row| {
+            if (std.mem.eql(u8, row.body.name, "sqlite_sequences")) {
+                continue;
+            }
+
+            try stdout.print("{s}\n", .{row.body.name});
+        }
     }
 }
