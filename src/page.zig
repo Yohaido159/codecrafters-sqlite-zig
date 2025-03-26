@@ -1,60 +1,94 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Row = @import("row.zig").Row;
+const Row = struct {
+    content: []const u8,
 
-pub const Page = struct {
-    size: u16,
-    header_offset: u16,
-    content_offset: u16,
-    data: []const u8,
-    content: PageContent,
-
-    pub fn init(
-        size: u16,
-        header_offset: u16,
-        content_offset: u16,
-        cell_offsets: []u16,
-        data: []const u8,
-        allocator: std.mem.Allocator,
-    ) !Page {
-        assert(data.len == size);
-
-        const page = Page{
-            .size = size,
-            .header_offset = header_offset,
-            .content_offset = content_offset,
-            .data = data,
-            .content = try PageContent.init(data, cell_offsets, allocator),
+    pub fn init(content: []const u8) Row {
+        return Row{
+            .content = content,
         };
-
-        return page;
-    }
-
-    pub fn deinit(self: Page, allocator: std.mem.Allocator) !void {
-        _ = allocator.free(self.content.rows);
     }
 };
 
-const PageContent = struct {
-    rows: []Row,
+const DBHeader = @import("db-info.zig").DBHeader;
 
-    pub fn init(data: []const u8, cell_offsets: []u16, allocator: std.mem.Allocator) !PageContent {
-        const rows_buffer = try allocator.alloc(Row, cell_offsets.len);
+pub const Pager = struct {
+    file: std.fs.File,
+    page_size: u16,
+    allocator: std.mem.Allocator,
 
-        const rows: []Row = try extract_rows(rows_buffer, data, cell_offsets);
-        return PageContent{ .rows = rows };
+    pub fn init(file: std.fs.File, allocator: std.mem.Allocator) !Pager {
+        const header = try DBHeader.init(file);
+        return Pager{
+            .file = file,
+            .page_size = header.page_size,
+            .allocator = allocator,
+        };
     }
 
-    fn extract_rows(rows_buffer: []Row, data: []const u8, cell_offsets: []u16) ![]Row {
-        var i: u16 = 0;
-        for (cell_offsets) |cell_offset| {
-            const row_size = data[cell_offset];
-            const row: Row = try Row.init(data[cell_offset .. cell_offset + row_size]);
-            rows_buffer[i] = row;
-            i += 1;
+    pub fn get_page(self: Pager, page_number: u16) !Page {
+        return Page.read(self.allocator, self.file, self.page_size, page_number);
+    }
+};
+
+pub const Page = struct {
+    allocator: std.mem.Allocator,
+    buffer: []u8,
+    rows: []Row,
+    header: Header,
+
+    pub fn read(
+        allocator: std.mem.Allocator,
+        file: std.fs.File,
+        page_size: u16,
+        page_number: u16,
+    ) !Page {
+        var buffer = try allocator.alloc(u8, page_size);
+        const page_offset = page_number * page_size;
+
+        try file.seekTo(page_offset);
+        _ = try file.read(buffer);
+
+        const header_offset: u16 = if (page_number == 0) 100 else 0;
+        const cell_count = std.mem.readInt(u16, buffer[header_offset + 3 .. header_offset + 5][0..2], .big);
+
+        var cell_offsets = try allocator.alloc(u16, cell_count);
+        for (0..cell_count) |i| {
+            const start = header_offset + 8 + i * 2;
+            const end = start + 2;
+            const buf = buffer[start..end][0..2].*;
+            const cell_pointer = std.mem.readInt(u16, &buf, .big);
+            cell_offsets[i] = cell_pointer;
         }
 
-        return rows_buffer;
+        var rows = try allocator.alloc(Row, cell_count);
+
+        for (0..cell_count) |i| {
+            rows[i] = Row.init(buffer[cell_offsets[i]..]);
+        }
+
+        const header = Header{
+            .cell_amount = cell_count,
+            .cell_offsets = cell_offsets,
+        };
+
+        return Page{
+            .allocator = allocator,
+            .buffer = buffer,
+            .rows = rows,
+            .header = header,
+        };
     }
+
+    pub fn deinit(self: Page) void {
+        self.allocator.free(self.header.cell_offsets);
+        self.allocator.free(self.rows);
+        self.allocator.free(self.buffer);
+    }
+};
+
+const Header = struct {
+    cell_amount: u16,
+    cell_offsets: []u16,
 };
