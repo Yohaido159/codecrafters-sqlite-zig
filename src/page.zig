@@ -120,7 +120,55 @@ const BTreeLeafCell = struct {
             .data_content = content[pos_content..],
         };
     }
+
+    // pub fn parse_data(self: BTreeLeafCell)  {
+    //     const header_content = self.header_content;
+    //     const header_without_size = header_content[1..];
+    //
+    //     var header_index: usize = 0;
+    //     var data_index: usize = 0;
+    //     while (header_index < header_without_size.len) {
+    //         const serial_type_varint = utils.readVarint(header_without_size[header_index..]);
+    //         const serial_type = serial_type_varint.value;
+    //         header_index += serial_type_varint.bytes_read;
+    //
+    //         const field_size = utils.get_skip_size(serial_type);
+    //         const field_data = self.data_content[data_index .. data_index + field_size];
+    //
+    //         data_index += field_size;
+    //     }
+    // }
 };
+
+const FieldIterator = struct {
+    columns_serial_type: []const u8, // header without the size byte
+    data: []const u8,
+    header_index: usize = 0,
+    data_index: usize = 0,
+
+    pub fn next(self: *FieldIterator) ?[]const u8 {
+        if (self.header_index >= self.columns_serial_type.len) return null;
+
+        const serial_type_varint = utils.readVarint(self.columns_serial_type[self.header_index..]);
+        const serial_type = serial_type_varint.value;
+        self.header_index += serial_type_varint.bytes_read;
+
+        const field_size = utils.get_skip_size(serial_type);
+
+        const field_data = self.data[self.data_index .. self.data_index + field_size];
+        self.data_index += field_size;
+        return field_data;
+    }
+};
+
+pub fn fieldIterator(cell: BTreeLeafCell) FieldIterator {
+    return FieldIterator{
+        .columns_serial_type = cell.header_content[1..],
+        .data = cell.data_content,
+        .header_index = 0,
+        .data_index = 0,
+    };
+}
 
 const Meta = struct {
     cell_amount: u16,
@@ -155,7 +203,14 @@ pub const Page = struct {
         var cells = try allocator.alloc(BTreeLeafCell, cell_count);
 
         for (0..cell_count) |i| {
-            const cell = BTreeLeafCell.init(page_buffer[cell_offsets[i]..]);
+            const cell_offset = cell_offsets[i];
+            // const cell_size = page_buffer[cell_offset];
+            // const skip_size_and_row_id = 2;
+
+            const start_offset = cell_offset;
+            // const end_offset = cell_offset + skip_size_and_row_id + cell_size;
+            // const cell = BTreeLeafCell.init(page_buffer[start_offset..end_offset]);
+            const cell = BTreeLeafCell.init(page_buffer[start_offset..]);
             cells[i] = cell;
         }
 

@@ -7,6 +7,8 @@ const assert = std.debug.assert;
 
 const DBHeader = @import("db-info.zig").DBHeader;
 const Pager = @import("page.zig").Pager;
+const fieldIterator = @import("page.zig").fieldIterator;
+const FieldIterator = @import("page.zig").FieldIterator;
 const SqliteSchemaRow = @import("sqlite-schema-row.zig").SqliteSchemaRow;
 
 pub fn main() !void {
@@ -60,8 +62,9 @@ pub fn main() !void {
                 const selected_table = try pager.get_page(sqlite_row.body.root_page[0] - 1);
                 defer selected_table.deinit();
 
-                for (selected_table.cells) |selected_cell| {
-                    std.debug.print("🚀 - DEBUGPRINT [807]: main.zig:67: selected_cell={s}\n", .{selected_cell.data_content});
+                var iter_cells = fieldIterator(cell);
+                while (iter_cells.next()) |field_data| {
+                    std.debug.print("Field data: {s}\n", .{field_data});
                 }
 
                 try stdout.print("{}\n", .{selected_table.meta.cell_amount});
