@@ -31,21 +31,17 @@ pub fn main() !void {
     const db_header = try DBHeader.init(file);
 
     const pager = try Pager.init(file, allocator);
+    const page_zero = try pager.get_page(0);
+    defer page_zero.deinit();
 
     if (std.mem.eql(u8, command, ".dbinfo")) {
-        const page = try pager.get_page(0);
-        defer page.deinit();
-
         try stdout.print("database page size: {any}\n", .{db_header.page_size});
-        try stdout.print("number of tables: {any}\n", .{page.header.cell_amount});
+        try stdout.print("number of tables: {any}\n", .{page_zero.meta.cell_amount});
     }
 
     if (std.mem.eql(u8, command, ".tables")) {
-        const page = try pager.get_page(0);
-        defer page.deinit();
-
-        for (page.rows) |row| {
-            const sqlite_row = try SqliteSchemaRow.init(row.content);
+        for (page_zero.cells) |cell| {
+            const sqlite_row = try SqliteSchemaRow.init(cell.content);
             if (std.mem.eql(u8, sqlite_row.body.table_name, "sqlite_sequence")) {
                 continue;
             }
@@ -58,13 +54,17 @@ pub fn main() !void {
         const page = try pager.get_page(0);
         defer page.deinit();
 
-        for (page.rows) |row| {
-            const sqlite_row = try SqliteSchemaRow.init(row.content);
+        for (page.cells) |cell| {
+            const sqlite_row = try SqliteSchemaRow.init(cell.content);
             if (std.mem.eql(u8, sqlite_row.body.table_name, table_name)) {
                 const selected_table = try pager.get_page(sqlite_row.body.root_page[0] - 1);
                 defer selected_table.deinit();
 
-                try stdout.print("{}\n", .{selected_table.header.cell_amount});
+                for (selected_table.cells) |selected_cell| {
+                    std.debug.print("🚀 - DEBUGPRINT [807]: main.zig:67: selected_cell={s}\n", .{selected_cell.data_content});
+                }
+
+                try stdout.print("{}\n", .{selected_table.meta.cell_amount});
             }
         }
     }

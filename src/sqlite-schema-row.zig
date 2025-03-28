@@ -19,10 +19,6 @@ pub const SqliteSchemaRow = struct {
         return .{ .value = value, .bytes_read = i };
     }
 
-    fn applyCalculation(size: u64) u64 {
-        return (size - 13) / 2;
-    }
-
     fn get_skip_size(serial_type: u64) usize {
         return switch (serial_type) {
             0 => 0, // NULL
