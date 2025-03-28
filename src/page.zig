@@ -120,6 +120,26 @@ const BTreeLeafCell = struct {
             .data_content = content[pos_content..],
         };
     }
+
+    pub fn parse_data(self: BTreeLeafCell) void {
+        std.debug.print("🚀 - DEBUGPRINT [826]: page.zig:124: parse_data=\n\n\n", .{});
+
+        const header_content = self.header_content;
+
+        const header_without_size = header_content[1..];
+
+        var byte_index: usize = 0;
+        var pos: usize = 0;
+        while (pos < header_without_size.len) {
+            const serial_type_varint = utils.readVarint(header_without_size[byte_index..]);
+            const serial_type = serial_type_varint.value;
+            byte_index += serial_type_varint.bytes_read;
+            const skip_size = utils.get_skip_size(serial_type);
+            const data = self.data_content[pos .. pos + skip_size];
+            std.debug.print("🚀 - DEBUGPRINT [837]: page.zig:138: data={s}\n", .{data});
+            pos += skip_size;
+        }
+    }
 };
 
 const Meta = struct {
@@ -155,7 +175,13 @@ pub const Page = struct {
         var cells = try allocator.alloc(BTreeLeafCell, cell_count);
 
         for (0..cell_count) |i| {
-            const cell = BTreeLeafCell.init(page_buffer[cell_offsets[i]..]);
+            const cell_offset = cell_offsets[i];
+            const cell_size = page_buffer[cell_offset];
+            const skip_size_and_row_id = 2;
+
+            const start_offset = cell_offset;
+            const end_offset = cell_offset + skip_size_and_row_id + cell_size;
+            const cell = BTreeLeafCell.init(page_buffer[start_offset..end_offset]);
             cells[i] = cell;
         }
 

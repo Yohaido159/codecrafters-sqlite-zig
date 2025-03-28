@@ -61,7 +61,7 @@ pub fn main() !void {
                 defer selected_table.deinit();
 
                 for (selected_table.cells) |selected_cell| {
-                    std.debug.print("🚀 - DEBUGPRINT [807]: main.zig:67: selected_cell={s}\n", .{selected_cell.data_content});
+                    selected_cell.parse_data();
                 }
 
                 try stdout.print("{}\n", .{selected_table.meta.cell_amount});
