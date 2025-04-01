@@ -57,13 +57,17 @@ pub const Lexer = struct {
     /// Static map of recognized keywords (case-sensitive)
     const keywords = std.StaticStringMap(u8).initComptime(.{
         .{ "SELECT", 0 },
+        .{ "select", 0 },
         .{ "FROM", 0 },
+        .{ "from", 0 },
         .{ "COUNT", 0 },
         .{ "WHERE", 0 },
         .{ "GROUP", 0 },
         .{ "BY", 0 },
         .{ "ORDER", 0 },
         .{ "LIMIT", 0 },
+        .{ "CREATE", 0 },
+        .{ "TABLE", 0 },
     });
 
     /// Check if a string is a recognized keyword

@@ -3,17 +3,36 @@ const assert = std.debug.assert;
 const Token = @import("./lexer.zig").Token;
 const Lexer = @import("./lexer.zig").Lexer;
 
+pub const TableOperation = union(enum) {
+    Select: struct {
+        tableName: []const u8,
+        fieldNames: std.ArrayList([]const u8),
+    },
+    CreateTable: struct { tableName: []const u8, fields: std.ArrayList(Field) },
+};
+
+pub const Field = struct {
+    name: []const u8,
+    dataType: DataType,
+};
+
+pub const DataType = enum {
+    integer,
+    text,
+};
+
 pub const Parser = struct {
     tokens: []const Token,
     pos: usize,
     fieldNames: std.ArrayList([]const u8),
-    tableName: []u8,
+    tableName: []const u8,
 
     pub fn init(tokens: []const Token, allocator: std.mem.Allocator) !Parser {
+        _ = allocator;
         return Parser{
             .tokens = tokens,
             .pos = 0,
-            .fieldNames = std.ArrayList([]const u8).init(allocator),
+            .fieldNames = std.ArrayList([]const u8).init(std.heap.page_allocator),
             .tableName = "",
         };
     }
@@ -27,32 +46,106 @@ pub const Parser = struct {
         tableName: []const u8,
     };
 
-    fn parseQuery(self: *Parser) !Result {
-        while (true) {
-            if (self.isAtEnd()) {
-                return .{
-                    .fieldNames = self.fieldNames,
-                    .tableName = self.tableName,
-                };
-            }
-
-            const token = self.getToken();
-            switch (token) {
-                .Keyword => |kw| {
-                    if (std.mem.eql(u8, kw.lexeme, "SELECT")) {
-                        try self.parseSelectQuery();
-                    }
-                },
-                else => error.InvalidToken,
-            }
-        }
+    pub fn parseQuery(self: *Parser) !TableOperation {
+        const token = self.getToken();
+        return try switch (token) {
+            .Keyword => |kw| {
+                if (std.mem.eql(u8, kw.lexeme, "select")) {
+                    return try self.parseSelectQuery();
+                } else if (std.mem.eql(u8, kw.lexeme, "CREATE")) {
+                    return try self.parseCreateTableQuery();
+                }
+                unreachable;
+            },
+            else => unreachable,
+        };
     }
 
-    fn parseSelectQuery(self: *Parser) !void {
-        try self.expectToken(Token{ .Keyword = .{ .lexeme = "SELECT" } });
-        try self.expectToken(.Identifier);
-        try self.expectToken(.Keyword);
-        try self.expectToken(.Identifier);
+    fn parseSelectQuery(self: *Parser) !TableOperation {
+        try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "select" } });
+        self.advance();
+        try self.parseFieldNames();
+        self.advance();
+        try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
+        self.advance();
+        try self.parseTableName();
+
+        return TableOperation{ .Select = .{
+            .fieldNames = self.fieldNames,
+            .tableName = self.tableName,
+        } };
+    }
+
+    fn parseFieldNames(self: *Parser) !void {
+        const token = self.getToken();
+        try self.expectIdentifierToken(token);
+        try self.fieldNames.append(token.Identifier.lexeme);
+    }
+
+    fn parseTableName(self: *Parser) !void {
+        const token = self.getToken();
+        try self.expectIdentifierToken(token);
+        self.tableName = token.Identifier.lexeme;
+    }
+
+    fn parseCreateTableQuery(self: *Parser) !TableOperation {
+        try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "CREATE" } });
+        self.advance();
+        try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "TABLE" } });
+        self.advance();
+        try self.expectIdentifierToken(self.getToken());
+        self.advance();
+        try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = "(" } });
+        self.advance();
+
+        var fields = std.ArrayList(Field).init(self.fieldNames.allocator);
+        try self.parseFields(&fields);
+
+        return TableOperation{ .CreateTable = .{
+            .tableName = self.tableName,
+            .fields = fields,
+        } };
+    }
+
+    fn parseFields(self: *Parser, fields: *std.ArrayList(Field)) !void {
+        // we should start consume token by token, the first token is the Identifier of the field name
+        // the second token is the data type
+        // we should skip the field that has 'primary key as it's the row_id and not store in the table
+
+        while (self.pos < self.tokens.len) {
+            const token = self.getToken();
+            if (token == .Symbol and std.mem.eql(u8, token.Symbol.lexeme, ")")) {
+                break;
+            }
+
+            try self.expectIdentifierToken(token);
+            const fieldName = token.Identifier.lexeme;
+            self.advance();
+
+            const dataTypeToken = self.getToken();
+            try self.expectIdentifierToken(dataTypeToken);
+
+            var dataType: DataType = undefined;
+            if (std.mem.eql(u8, dataTypeToken.Identifier.lexeme, "integer")) {
+                dataType = DataType.integer;
+                self.advance();
+            } else if (std.mem.eql(u8, dataTypeToken.Identifier.lexeme, "text")) {
+                dataType = DataType.text;
+                self.advance();
+            }
+            {
+                while (self.pos < self.tokens.len) {
+                    const tokeninner = self.getToken();
+                    if (tokeninner == .Symbol and std.mem.eql(u8, tokeninner.Symbol.lexeme, ",")) {
+                        self.advance();
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+
+            try fields.append(Field{ .name = fieldName, .dataType = dataType });
+        }
     }
 
     fn getToken(self: *Parser) Token {
@@ -63,31 +156,19 @@ pub const Parser = struct {
         self.pos += 1;
     }
 
-    fn expectToken(self: *Parser, token: Token) !void {
-        const current = self.getToken();
-        switch (current) {
-            .Keyword => |kw| {
-                if (std.mem.eql(u8, kw.lexeme, token.Keyword.lexeme)) {
-                    self.advance();
-                } else {
-                    return error.InvalidToken;
-                }
-            },
-            .Identifier => |id| {
-                if (std.mem.eql(u8, id.lexeme, token.Identifier.lexeme)) {
-                    self.advance();
-                } else {
-                    return error.InvalidToken;
-                }
-            },
-            else => return error.InvalidToken,
-        }
-
-        self.pos += 1;
+    fn expectKeywordToken(self: *Parser, token: Token) !void {
+        const currentToken = self.getToken();
+        assert(currentToken == .Keyword and std.mem.eql(u8, currentToken.Keyword.lexeme, token.Keyword.lexeme));
     }
 
-    fn isAtEnd(self: *Parser) bool {
-        return self.pos >= self.tokens.len;
+    fn expectSymbolToken(self: *Parser, token: Token) !void {
+        const currentToken = self.getToken();
+        assert(currentToken == .Symbol and std.mem.eql(u8, currentToken.Symbol.lexeme, token.Symbol.lexeme));
+    }
+
+    fn expectIdentifierToken(self: *Parser, token: Token) !void {
+        const currentToken = self.getToken();
+        assert(currentToken == .Identifier and std.mem.eql(u8, currentToken.Identifier.lexeme, token.Identifier.lexeme));
     }
 };
 
@@ -102,6 +183,7 @@ test "Parser - parse simple query" {
     try testing.expectEqual(@as(usize, 5), tokens.len); // 4 tokens + EOF
 
     var parser = try Parser.init(tokens, testing.allocator);
+    defer parser.deinit();
     const result = try parser.parseQuery();
     try testing.expectEqualStrings("name", result.fieldNames.items[0]);
     try testing.expectEqualStrings("table", result.tableName);
