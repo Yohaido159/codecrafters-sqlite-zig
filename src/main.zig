@@ -62,8 +62,9 @@ pub fn main() !void {
 
         const result = try parser.parseQuery();
         const table_name = result.Select.tableName;
-        const columns = result.Select.fieldNames;
-        const column = columns.items[0];
+        const function_name = result.Select.functionName;
+        // const columns = result.Select.fieldNames;
+        // const column = columns.items[0];
 
         for (page_zero.cells) |cell| {
             const sqlite_row = try SqliteSchemaRow.init(cell.content);
@@ -80,9 +81,18 @@ pub fn main() !void {
                 defer parserSql.deinit();
 
                 const resultSql = try parserSql.parseQuery();
+
+                if (function_name) |functionname| {
+                    if (std.mem.eql(u8, functionname, "count")) {
+                        try stdout.print("{any}\n", .{selected_table.meta.cell_amount});
+                        return;
+                    }
+                }
                 //
                 var match_index: u8 = 0;
                 for (resultSql.CreateTable.fields.items) |field| {
+                    const columns = result.Select.fieldNames.?;
+                    const column = columns.items[0];
                     if (std.mem.eql(u8, field.name, column)) {
                         break;
                     }

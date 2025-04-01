@@ -61,6 +61,7 @@ pub const Lexer = struct {
         .{ "FROM", 0 },
         .{ "from", 0 },
         .{ "COUNT", 0 },
+        .{ "count", 0 },
         .{ "WHERE", 0 },
         .{ "GROUP", 0 },
         .{ "BY", 0 },

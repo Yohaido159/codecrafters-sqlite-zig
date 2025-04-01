@@ -5,8 +5,9 @@ const Lexer = @import("./lexer.zig").Lexer;
 
 pub const TableOperation = union(enum) {
     Select: struct {
+        functionName: ?[]const u8,
         tableName: []const u8,
-        fieldNames: std.ArrayList([]const u8),
+        fieldNames: ?std.ArrayList([]const u8),
     },
     CreateTable: struct { tableName: []const u8, fields: std.ArrayList(Field) },
 };
@@ -64,16 +65,40 @@ pub const Parser = struct {
     fn parseSelectQuery(self: *Parser) !TableOperation {
         try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "select" } });
         self.advance();
-        try self.parseFieldNames();
-        self.advance();
-        try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
-        self.advance();
-        try self.parseTableName();
+        if (self.checkIdentifierToken(self.getToken())) {
+            try self.parseFieldNames();
+            self.advance();
+            try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
+            self.advance();
+            try self.parseTableName();
 
-        return TableOperation{ .Select = .{
-            .fieldNames = self.fieldNames,
-            .tableName = self.tableName,
-        } };
+            return TableOperation{ .Select = .{
+                .fieldNames = self.fieldNames,
+                .tableName = self.tableName,
+                .functionName = null,
+            } };
+        } else if (self.checkKeywordToken(Token{ .Keyword = .{ .lexeme = "count" } })) {
+            try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "count" } });
+            self.advance();
+            try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = "(" } });
+            self.advance();
+            try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = "*" } });
+            self.advance();
+            try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = ")" } });
+            self.advance();
+
+            try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
+            self.advance();
+            try self.parseTableName();
+
+            return TableOperation{ .Select = .{
+                .fieldNames = null,
+                .functionName = "count",
+                .tableName = self.tableName,
+            } };
+        } else {
+            unreachable;
+        }
     }
 
     fn parseFieldNames(self: *Parser) !void {
@@ -161,6 +186,11 @@ pub const Parser = struct {
         assert(currentToken == .Keyword and std.mem.eql(u8, currentToken.Keyword.lexeme, token.Keyword.lexeme));
     }
 
+    fn checkKeywordToken(self: *Parser, token: Token) bool {
+        const currentToken = self.getToken();
+        return currentToken == .Keyword and std.mem.eql(u8, currentToken.Keyword.lexeme, token.Keyword.lexeme);
+    }
+
     fn expectSymbolToken(self: *Parser, token: Token) !void {
         const currentToken = self.getToken();
         assert(currentToken == .Symbol and std.mem.eql(u8, currentToken.Symbol.lexeme, token.Symbol.lexeme));
@@ -169,6 +199,11 @@ pub const Parser = struct {
     fn expectIdentifierToken(self: *Parser, token: Token) !void {
         const currentToken = self.getToken();
         assert(currentToken == .Identifier and std.mem.eql(u8, currentToken.Identifier.lexeme, token.Identifier.lexeme));
+    }
+
+    fn checkIdentifierToken(self: *Parser, token: Token) bool {
+        const currentToken = self.getToken();
+        return currentToken == .Identifier and std.mem.eql(u8, currentToken.Identifier.lexeme, token.Identifier.lexeme);
     }
 };
 
