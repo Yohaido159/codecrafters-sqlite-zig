@@ -88,31 +88,71 @@ pub fn main() !void {
                         return;
                     }
                 }
-                //
-                var match_index: u8 = 0;
-                for (resultSql.CreateTable.fields.items) |field| {
-                    const columns = result.Select.fieldNames.?;
-                    const column = columns.items[0];
-                    if (std.mem.eql(u8, field.name, column)) {
-                        break;
-                    }
 
-                    match_index += 1;
-                }
+                const columns = result.Select.fieldNames.?;
 
                 for (selected_table.cells) |selected_table_cell| {
                     var iter_cells = fieldIterator(selected_table_cell);
-                    var match_index_cell: u8 = 0;
+                    var field_values = std.ArrayList([]const u8).init(allocator);
+                    defer field_values.deinit();
+
+                    // Collect all field values from this row
                     while (iter_cells.next()) |field_data| {
-                        if (match_index_cell == match_index) {
-                            try stdout.print("{s}\n", .{field_data});
+                        try field_values.append(field_data);
+                    }
+
+                    // Print only the requested columns with proper separators
+                    var first_column = true;
+                    for (columns.items) |column| {
+                        var match_index: ?usize = null;
+
+                        // Find the index of this column in the table schema
+                        for (resultSql.CreateTable.fields.items, 0..) |field, i| {
+                            if (std.mem.eql(u8, field.name, column)) {
+                                match_index = i;
+                                break;
+                            }
                         }
 
-                        match_index_cell += 1;
+                        // Print the value if we found the column
+                        if (match_index) |idx| {
+                            if (!first_column) {
+                                try stdout.print("|", .{});
+                            }
+                            if (idx < field_values.items.len) {
+                                try stdout.print("{s}", .{field_values.items[idx]});
+                            }
+                            first_column = false;
+                        }
                     }
+                    try stdout.print("\n", .{});
                 }
 
-                // try stdout.print("{}\n", .{selected_table.meta.cell_amount});
+                // const columns = result.Select.fieldNames.?;
+                //
+                // for (columns.items) |column| {
+                //     var match_index: u8 = 0;
+                //     for (resultSql.CreateTable.fields.items) |field| {
+                //         if (std.mem.eql(u8, field.name, column)) {
+                //             break;
+                //         }
+                //         //
+                //         match_index += 1;
+                //         for (selected_table.cells) |selected_table_cell| {
+                //             var iter_cells = fieldIterator(selected_table_cell);
+                //             var match_index_cell: u8 = 0;
+                //             while (iter_cells.next()) |field_data| {
+                //                 if (match_index_cell == match_index) {
+                //                     try stdout.print("{s}", .{field_data});
+                //                 }
+                //
+                //                 match_index_cell += 1;
+                //             }
+                //             try stdout.print("\n", .{});
+                //         }
+                //     }
+                //
+                // }
             }
         }
     }

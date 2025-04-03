@@ -67,7 +67,7 @@ pub const Parser = struct {
         self.advance();
         if (self.checkIdentifierToken(self.getToken())) {
             try self.parseFieldNames();
-            self.advance();
+            // self.advance();
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
             self.advance();
             try self.parseTableName();
@@ -86,7 +86,6 @@ pub const Parser = struct {
             self.advance();
             try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = ")" } });
             self.advance();
-
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
             self.advance();
             try self.parseTableName();
@@ -102,9 +101,21 @@ pub const Parser = struct {
     }
 
     fn parseFieldNames(self: *Parser) !void {
-        const token = self.getToken();
-        try self.expectIdentifierToken(token);
-        try self.fieldNames.append(token.Identifier.lexeme);
+        while (self.pos < self.tokens.len) {
+            const tokeninner = self.getToken();
+            if (tokeninner == .Symbol) {
+                self.advance();
+                continue;
+            }
+
+            if (tokeninner == .Keyword) {
+                break;
+            }
+            const token = self.getToken();
+            try self.expectIdentifierToken(token);
+            try self.fieldNames.append(token.Identifier.lexeme);
+            self.advance();
+        }
     }
 
     fn parseTableName(self: *Parser) !void {
