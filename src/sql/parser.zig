@@ -67,7 +67,6 @@ pub const Parser = struct {
         self.advance();
         if (self.checkIdentifierToken(self.getToken())) {
             try self.parseFieldNames();
-            // self.advance();
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
             self.advance();
             try self.parseTableName();
