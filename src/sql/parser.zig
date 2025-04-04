@@ -7,7 +7,7 @@ pub const TableOperation = union(enum) {
     Select: struct {
         functionName: ?[]const u8,
         tableName: []const u8,
-        fieldNames: ?std.ArrayList([]const u8),
+        columnNames: ?std.ArrayList([]const u8),
     },
     CreateTable: struct { tableName: []const u8, fields: std.ArrayList(Field) },
 };
@@ -25,7 +25,7 @@ pub const DataType = enum {
 pub const Parser = struct {
     tokens: []const Token,
     pos: usize,
-    fieldNames: std.ArrayList([]const u8),
+    columnNames: std.ArrayList([]const u8),
     tableName: []const u8,
 
     pub fn init(tokens: []const Token, allocator: std.mem.Allocator) !Parser {
@@ -33,17 +33,17 @@ pub const Parser = struct {
         return Parser{
             .tokens = tokens,
             .pos = 0,
-            .fieldNames = std.ArrayList([]const u8).init(std.heap.page_allocator),
+            .columnNames = std.ArrayList([]const u8).init(std.heap.page_allocator),
             .tableName = "",
         };
     }
 
     pub fn deinit(self: *Parser) void {
-        self.fieldNames.deinit();
+        self.columnNames.deinit();
     }
 
     const Result = struct {
-        fieldNames: std.ArrayList([]const u8),
+        columnNames: std.ArrayList([]const u8),
         tableName: []const u8,
     };
 
@@ -72,7 +72,7 @@ pub const Parser = struct {
             try self.parseTableName();
 
             return TableOperation{ .Select = .{
-                .fieldNames = self.fieldNames,
+                .columnNames = self.columnNames,
                 .tableName = self.tableName,
                 .functionName = null,
             } };
@@ -90,7 +90,7 @@ pub const Parser = struct {
             try self.parseTableName();
 
             return TableOperation{ .Select = .{
-                .fieldNames = null,
+                .columnNames = null,
                 .functionName = "count",
                 .tableName = self.tableName,
             } };
@@ -112,7 +112,7 @@ pub const Parser = struct {
             }
             const token = self.getToken();
             try self.expectIdentifierToken(token);
-            try self.fieldNames.append(token.Identifier.lexeme);
+            try self.columnNames.append(token.Identifier.lexeme);
             self.advance();
         }
     }
@@ -133,7 +133,7 @@ pub const Parser = struct {
         try self.expectSymbolToken(Token{ .Symbol = .{ .lexeme = "(" } });
         self.advance();
 
-        var fields = std.ArrayList(Field).init(self.fieldNames.allocator);
+        var fields = std.ArrayList(Field).init(self.columnNames.allocator);
         try self.parseFields(&fields);
 
         return TableOperation{ .CreateTable = .{
@@ -230,6 +230,6 @@ test "Parser - parse simple query" {
     var parser = try Parser.init(tokens, testing.allocator);
     defer parser.deinit();
     const result = try parser.parseQuery();
-    try testing.expectEqualStrings("name", result.fieldNames.items[0]);
+    try testing.expectEqualStrings("name", result.columnNames.items[0]);
     try testing.expectEqualStrings("table", result.tableName);
 }

@@ -170,6 +170,22 @@ pub fn fieldIterator(cell: BTreeLeafCell) FieldIterator {
     };
 }
 
+const CellIterator = struct {
+    page: *const Page,
+    current_index: usize = 0,
+
+    pub fn next(self: *CellIterator) ?FieldIterator {
+        if (self.current_index >= self.page.meta.cell_amount) {
+            return null;
+        }
+
+        const cell = self.page.cells[self.current_index];
+        self.current_index += 1;
+
+        return fieldIterator(cell);
+    }
+};
+
 const Meta = struct {
     cell_amount: u16,
     cell_offsets: []u16,
@@ -181,6 +197,12 @@ pub const Page = struct {
     cells: []BTreeLeafCell,
     meta: Meta,
 
+    pub fn getIterator(self: *const Page) CellIterator {
+        return CellIterator{
+            .page = self,
+            .current_index = 0,
+        };
+    }
     pub fn read(
         allocator: std.mem.Allocator,
         file: std.fs.File,
