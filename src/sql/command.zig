@@ -31,9 +31,21 @@ pub fn Command() type {
                 .Select => |select| {
                     const tableName = select.tableName;
                     const columnNames = select.columnNames;
-                    // const whereClause = select.whereClause;
-                    // self.exectuteSelectQuery(tableName, whereClause, columnNames);
-                    try self.exectuteSelectQuery(tableName, columnNames);
+                    const rows = try self.exectuteSelectQuery(tableName, columnNames);
+                    for (rows.items) |row| {
+                        for (row.columns.items, 0..) |col, idx| {
+                            if (idx > 0) {
+                                std.debug.print("|", .{});
+                            }
+                            std.debug.print("{s}", .{col});
+                        }
+                        std.debug.print("\n", .{});
+                    }
+
+                    defer for (rows.items) |row| {
+                        row.columns.deinit();
+                    };
+                    defer rows.deinit();
                 },
                 // .is_function => |function| {
                 //     const function_name = function.functionName;
@@ -44,45 +56,57 @@ pub fn Command() type {
             }
         }
 
-        // fn exectuteSelectQuery(tableName: []const u8, whereClause: WhereClause, columnNames: [][]const u8) void {
-        pub fn exectuteSelectQuery(self: Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8)) !void {
-            const db = try Database.init(self.allocator, self.file);
+        pub fn exectuteSelectQuery(self: Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8)) !std.ArrayList(Row) {
+            var db = try Database.init(self.allocator, self.file);
+            // defer db.deinit();
             const queryInfo = try db.getQueryInfo(TableOperation{ .Select = .{
                 .tableName = tableName,
                 .columnNames = columnNames.?,
                 .functionName = null,
             } });
-            _ = queryInfo; // autofix
-            // result is hashmap name => index of column
+
+            var nameSet = std.StringHashMap(u8).init(self.allocator);
+            defer nameSet.deinit();
+
+            for (columnNames.?.items) |colName| {
+                const a: u8 = 1;
+                try nameSet.put(colName, a);
+            }
 
             const currentTable = try db.getTableByName(tableName);
+            // defer currentTable.deinit();
 
-            const cellIterator = currentTable.getIterator();
-            for (cellIterator.next()) |row| {
-                _ = row; // autofix
-                // if (!WhereClause.valid(row)) {
-                //     continue;
-                // }
-                // const rowId = row.rowId;
-                // const rowData = row.data;
-                //
-                // const rowIterator = row.getIterator();
-                // for (rowIterator.next(), 0..) |column, idx| {
-                //     const columnNameExist = queryInfo.get(idx);
-                //     if (!columnNameExist) {
-                //         continue;
-                //     }
-                //     const data = column.data;
-                //
-                //     if (idx > 0) {
-                //         std.debug.print("|", .{});
-                //     }
-                //     std.debug.print("{s}", .{column});
-                // }
+            var rows = std.ArrayList(Row).init(self.allocator);
+
+            var cellIterator = currentTable.getIterator();
+            while (cellIterator.next()) |rowIter| {
+                var rowMutable = rowIter;
+
+                const columns = std.ArrayList([]const u8).init(self.allocator);
+                var row = Row{ .columns = columns };
+
+                var index: usize = 0;
+                while (rowMutable.next()) |column_data| {
+                    const columnName = queryInfo.get(index);
+                    const has = nameSet.get(columnName.?);
+
+                    if (has == 1) {
+                        try row.columns.append(column_data);
+                    }
+
+                    index += 1;
+                }
+                try rows.append(row);
             }
+
+            return rows;
         }
     };
 }
+
+const Row = struct {
+    columns: std.ArrayList([]const u8),
+};
 
 const WhereClause = struct {
     head: ?Node,

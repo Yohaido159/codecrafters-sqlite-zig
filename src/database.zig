@@ -3,6 +3,8 @@ const Pager = @import("page.zig").Pager;
 const Page = @import("page.zig").Page;
 const SqliteSchemaRow = @import("sqlite-schema-row.zig").SqliteSchemaRow;
 const TableOperation = @import("sql/parser.zig").TableOperation;
+const Lexer = @import("sql/lexer.zig").Lexer;
+const Parser = @import("sql/parser.zig").Parser;
 
 const assert = std.debug.assert;
 
@@ -24,13 +26,18 @@ pub const Database = struct {
         };
     }
 
-    pub fn getTableByName(self: Database, tableName: []const u8) !Page {
+    pub fn deinit(self: *Database) void {
+        self.systemTable.deinit();
+        self.pageZero.deinit();
+    }
+
+    pub fn getTableByName(self: *Database, tableName: []const u8) !Page {
         const pageIndex = try self.systemTable.getTablePageIndex(tableName);
         const page = try self.pager.get_page(@intCast(pageIndex));
         return page;
     }
 
-    pub fn getQueryInfo(self: Database, query: TableOperation) !std.AutoHashMap([]const u8, usize) {
+    pub fn getQueryInfo(self: *Database, query: TableOperation) !std.AutoHashMap(usize, []const u8) {
         return try self.systemTable.getQueryInfo(query);
     }
 };
@@ -40,35 +47,50 @@ pub const SystemTable = struct {
     allocator: std.mem.Allocator,
     pager: Pager,
     pageZero: Page,
+    queryResult: std.AutoHashMap(usize, []const u8),
 
     pub fn init(allocator: std.mem.Allocator, pager: Pager, pageZero: Page) Self {
         return Self{
             .allocator = allocator,
             .pager = pager,
             .pageZero = pageZero,
+            .queryResult = std.AutoHashMap(usize, []const u8).init(allocator),
         };
     }
 
-    pub fn getQueryInfo(self: Self, query: TableOperation) !std.AutoHashMap([]const u8, usize) {
+    pub fn deinit(self: *Self) void {
+        self.queryResult.deinit();
+    }
+
+    pub fn getQueryInfo(self: *Self, query: TableOperation) !std.AutoHashMap(usize, []const u8) {
         assert(query == TableOperation.Select);
         const querySelect = query.Select;
 
         const pageZero = self.pageZero;
         const allocator = self.allocator;
 
-        var result = std.AutoHashMap([]const u8, usize).init(allocator);
-        defer result.deinit();
+        var result = std.AutoHashMap(usize, []const u8).init(allocator);
 
-        for (pageZero.cells, 0..) |cell, idx| {
+        for (pageZero.cells) |cell| {
             const sqlite_row = try SqliteSchemaRow.init(cell.content);
             if (std.mem.eql(u8, sqlite_row.body.table_name, querySelect.tableName)) {
-                for (querySelect.columnNames.?.items) |columnName| {
-                    try result.put(columnName, idx);
+                var lexerSql = Lexer.init(sqlite_row.body.sql, allocator);
+                defer lexerSql.deinit();
+
+                const tokensSql = try lexerSql.tokenize();
+
+                var parserSql = try Parser.init(tokensSql, allocator);
+                defer parserSql.deinit();
+
+                const resultSql = try parserSql.parseQuery();
+                for (resultSql.CreateTable.fields.items, 0..) |field, column_index| {
+                    try result.put(column_index, field.name);
                 }
             }
         }
 
-        return result;
+        self.queryResult = result;
+        return self.queryResult;
     }
 
     fn getTablePageIndex(self: Self, tableName: []const u8) !usize {
