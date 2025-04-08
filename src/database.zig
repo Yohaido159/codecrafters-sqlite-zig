@@ -27,7 +27,6 @@ pub const Database = struct {
     }
 
     pub fn deinit(self: *Database) void {
-        self.systemTable.deinit();
         self.pageZero.deinit();
     }
 
@@ -58,10 +57,6 @@ pub const SystemTable = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
-        self.queryResult.deinit();
-    }
-
     pub fn getQueryInfo(self: *Self, query: TableOperation) !std.AutoHashMap(usize, []const u8) {
         assert(query == TableOperation.Select);
         const querySelect = query.Select;
@@ -70,6 +65,7 @@ pub const SystemTable = struct {
         const allocator = self.allocator;
 
         var result = std.AutoHashMap(usize, []const u8).init(allocator);
+        defer result.deinit();
 
         for (pageZero.cells) |cell| {
             const sqlite_row = try SqliteSchemaRow.init(cell.content);
@@ -83,14 +79,14 @@ pub const SystemTable = struct {
                 defer parserSql.deinit();
 
                 const resultSql = try parserSql.parseQuery();
-                for (resultSql.CreateTable.fields.items, 0..) |field, column_index| {
+                defer self.allocator.free(resultSql.CreateTable.fields);
+                for (resultSql.CreateTable.fields, 0..) |field, column_index| {
                     try result.put(column_index, field.name);
                 }
             }
         }
 
-        self.queryResult = result;
-        return self.queryResult;
+        return try result.clone();
     }
 
     fn getTablePageIndex(self: Self, tableName: []const u8) !usize {

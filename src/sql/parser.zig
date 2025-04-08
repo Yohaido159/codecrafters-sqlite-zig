@@ -9,7 +9,7 @@ pub const TableOperation = union(enum) {
         tableName: []const u8,
         columnNames: ?std.ArrayList([]const u8),
     },
-    CreateTable: struct { tableName: []const u8, fields: std.ArrayList(Field) },
+    CreateTable: struct { tableName: []const u8, fields: [](Field) },
 };
 
 pub const Field = struct {
@@ -29,11 +29,10 @@ pub const Parser = struct {
     tableName: []const u8,
 
     pub fn init(tokens: []const Token, allocator: std.mem.Allocator) !Parser {
-        _ = allocator;
         return Parser{
             .tokens = tokens,
             .pos = 0,
-            .columnNames = std.ArrayList([]const u8).init(std.heap.page_allocator),
+            .columnNames = std.ArrayList([]const u8).init(allocator),
             .tableName = "",
         };
     }
@@ -135,10 +134,11 @@ pub const Parser = struct {
 
         var fields = std.ArrayList(Field).init(self.columnNames.allocator);
         try self.parseFields(&fields);
+        defer fields.deinit();
 
         return TableOperation{ .CreateTable = .{
             .tableName = self.tableName,
-            .fields = fields,
+            .fields = try self.columnNames.allocator.dupe(Field, fields.items),
         } };
     }
 

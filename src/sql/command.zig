@@ -10,15 +10,22 @@ pub fn Command() type {
 
         allocator: std.mem.Allocator,
         file: std.fs.File,
+        db: Database,
 
-        pub fn init(allocator: std.mem.Allocator, file: std.fs.File) Self {
+        pub fn init(allocator: std.mem.Allocator, file: std.fs.File) !Self {
+            const db = try Database.init(allocator, file);
             return Self{
                 .allocator = allocator,
                 .file = file,
+                .db = db,
             };
         }
 
-        pub fn parseCommand(self: Self, input: []const u8) !void {
+        pub fn deinit(self: *Self) void {
+            self.db.deinit();
+        }
+
+        pub fn parseCommand(self: *Self, input: []const u8) !void {
             var lexer = Lexer.init(input, self.allocator);
             defer lexer.deinit();
             const tokens = try lexer.tokenize();
@@ -32,7 +39,7 @@ pub fn Command() type {
                     const tableName = select.tableName;
                     const columnNames = select.columnNames;
                     const rows = try self.exectuteSelectQuery(tableName, columnNames);
-                    for (rows.items) |row| {
+                    for (rows) |row| {
                         for (row.columns.items, 0..) |col, idx| {
                             if (idx > 0) {
                                 std.debug.print("|", .{});
@@ -42,10 +49,15 @@ pub fn Command() type {
                         std.debug.print("\n", .{});
                     }
 
-                    defer for (rows.items) |row| {
-                        row.columns.deinit();
-                    };
-                    defer rows.deinit();
+                    defer {
+                        for (rows) |*row| {
+                            for (row.columns.items) |col_data| {
+                                self.allocator.free(col_data); // Free each string
+                            }
+                            row.columns.deinit(); // Free the columns array
+                        }
+                        self.allocator.free(rows); // Free the rows slice
+                    }
                 },
                 // .is_function => |function| {
                 //     const function_name = function.functionName;
@@ -56,14 +68,13 @@ pub fn Command() type {
             }
         }
 
-        pub fn exectuteSelectQuery(self: Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8)) !std.ArrayList(Row) {
-            var db = try Database.init(self.allocator, self.file);
-            // defer db.deinit();
-            const queryInfo = try db.getQueryInfo(TableOperation{ .Select = .{
+        pub fn exectuteSelectQuery(self: *Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8)) ![](Row) {
+            var queryInfo = try self.db.getQueryInfo(TableOperation{ .Select = .{
                 .tableName = tableName,
                 .columnNames = columnNames.?,
                 .functionName = null,
             } });
+            defer queryInfo.deinit();
 
             var nameSet = std.StringHashMap(u8).init(self.allocator);
             defer nameSet.deinit();
@@ -73,8 +84,8 @@ pub fn Command() type {
                 try nameSet.put(colName, a);
             }
 
-            const currentTable = try db.getTableByName(tableName);
-            // defer currentTable.deinit();
+            const currentTable = try self.db.getTableByName(tableName);
+            defer currentTable.deinit();
 
             var rows = std.ArrayList(Row).init(self.allocator);
 
@@ -91,7 +102,7 @@ pub fn Command() type {
                     const has = nameSet.get(columnName.?);
 
                     if (has == 1) {
-                        try row.columns.append(column_data);
+                        try row.columns.append(try self.allocator.dupe(u8, column_data));
                     }
 
                     index += 1;
@@ -99,7 +110,7 @@ pub fn Command() type {
                 try rows.append(row);
             }
 
-            return rows;
+            return try rows.toOwnedSlice();
         }
     };
 }

@@ -54,8 +54,9 @@ pub fn main() !void {
             try stdout.print("{s} ", .{sqlite_row.body.table_name});
         }
     } else {
-        const commandInstance = Command().init(allocator, file);
+        var commandInstance = try Command().init(allocator, file);
         try commandInstance.parseCommand(command);
+        defer commandInstance.deinit();
         // var lexer = Lexer.init(command, allocator);
         // defer lexer.deinit();
         //
