@@ -5,6 +5,8 @@ pub const Token = union(enum) {
     Symbol: struct { lexeme: []const u8 },
     Keyword: struct { lexeme: []const u8 },
     Identifier: struct { lexeme: []const u8 },
+    Integer: struct { lexeme: []const u8, value: i64 },
+    String: struct { lexeme: []const u8 },
     Eof: struct { lexeme: []const u8 },
 
     /// Creates a String representation of the token
@@ -13,6 +15,8 @@ pub const Token = union(enum) {
             .Symbol => |s| try std.fmt.allocPrint(allocator, "Symbol({s})", .{s.lexeme}),
             .Keyword => |k| try std.fmt.allocPrint(allocator, "Keyword({s})", .{k.lexeme}),
             .Identifier => |i| try std.fmt.allocPrint(allocator, "Identifier({s})", .{i.lexeme}),
+            .Integer => |n| try std.fmt.allocPrint(allocator, "Integer({s}, {d})", .{ n.lexeme, n.value }),
+            .String => |s| try std.fmt.allocPrint(allocator, "String({s})", .{s.lexeme}),
             .Eof => |_| try allocator.dupe(u8, "EOF"),
         };
     }
@@ -46,12 +50,25 @@ pub const Lexer = struct {
         .{ "*", 0 },
         .{ ",", 0 },
         .{ ";", 0 },
+        .{ "=", 0 },
+        .{ ">", 0 },
+        .{ "<", 0 },
+        .{ ">=", 0 },
+        .{ "<=", 0 },
+        .{ "<>", 0 },
+        .{ "!=", 0 },
     });
 
     /// Check if a character is a recognized symbol
     pub fn isSymbol(c: u8) bool {
         const symbol_str = [_]u8{c};
         return symbol_set.has(&symbol_str);
+    }
+
+    /// Check if a two-character sequence forms a compound operator
+    pub fn isCompoundOperator(s: []const u8) bool {
+        if (s.len < 2) return false;
+        return symbol_set.has(s[0..2]);
     }
 
     /// Static map of recognized keywords (case-sensitive)
@@ -63,17 +80,27 @@ pub const Lexer = struct {
         .{ "COUNT", 0 },
         .{ "count", 0 },
         .{ "WHERE", 0 },
+        .{ "where", 0 },
         .{ "GROUP", 0 },
         .{ "BY", 0 },
         .{ "ORDER", 0 },
         .{ "LIMIT", 0 },
         .{ "CREATE", 0 },
         .{ "TABLE", 0 },
+        .{ "AND", 0 },
+        .{ "and", 0 },
+        .{ "OR", 0 },
+        .{ "or", 0 },
     });
 
     /// Check if a string is a recognized keyword
     pub fn isKeyword(keyword: []const u8) bool {
         return keywords.has(keyword);
+    }
+
+    /// Check if a character is a digit
+    fn isDigit(c: u8) bool {
+        return c >= '0' and c <= '9';
     }
 
     /// Get the next token from the input
@@ -91,10 +118,52 @@ pub const Lexer = struct {
         const start_pos = self.pos;
         const first_char = self.input[self.pos];
 
-        // Handle symbols separately as they're single characters
+        // Handle string literals
+        if (first_char == '\'') {
+            self.pos += 1; // Skip opening quote
+            const string_start = self.pos;
+
+            // Find closing quote
+            while (!self.isAtEnd() and self.input[self.pos] != '\'') {
+                self.pos += 1;
+            }
+
+            if (self.isAtEnd()) {
+                return error.UnterminatedString;
+            }
+
+            const string_content = self.input[string_start..self.pos];
+            self.pos += 1; // Skip closing quote
+
+            return Token{ .String = .{ .lexeme = string_content } };
+        }
+
+        // Handle compound operators
+        if (!self.isAtEnd() and self.pos + 1 < self.input.len) {
+            const potential_compound = self.input[self.pos .. self.pos + 2];
+            if (Lexer.isCompoundOperator(potential_compound)) {
+                self.pos += 2;
+                return Token{ .Symbol = .{ .lexeme = potential_compound } };
+            }
+        }
+
+        // Handle single character symbols
         if (Lexer.isSymbol(first_char)) {
             self.pos += 1;
             return Token{ .Symbol = .{ .lexeme = self.input[start_pos..self.pos] } };
+        }
+
+        // Handle integer literals
+        if (Lexer.isDigit(first_char)) {
+            // Extract consecutive digits
+            while (!self.isAtEnd() and Lexer.isDigit(self.input[self.pos])) {
+                self.pos += 1;
+            }
+
+            const num_lexeme = self.input[start_pos..self.pos];
+            const value = try std.fmt.parseInt(i64, num_lexeme, 10);
+
+            return Token{ .Integer = .{ .lexeme = num_lexeme, .value = value } };
         }
 
         // Extract token until whitespace or symbol
@@ -306,3 +375,62 @@ test "Token - toString" {
     defer allocator.free(eof_str);
     try testing.expectEqualStrings("EOF", eof_str);
 }
+
+// test "Lexer - integer literals" {
+//     const input = "select count(*) from table where id = 123";
+//     var lexer = Lexer.init(input, testing.allocator);
+//     defer lexer.deinit();
+//
+//     const tokens = try lexer.tokenize();
+//
+//     try testing.expect(tokens[8] == .Integer);
+//     switch (tokens[8]) {
+//         .Integer => |int| {
+//             try testing.expectEqualStrings("123", int.lexeme);
+//             try testing.expectEqual(@as(i64, 123), int.value);
+//         },
+//         else => return error.TestUnexpectedToken,
+//     }
+// }
+
+test "Lexer - string literals" {
+    const input = "select * from users where name = 'John'";
+    var lexer = Lexer.init(input, testing.allocator);
+    defer lexer.deinit();
+
+    const tokens = try lexer.tokenize();
+
+    try testing.expect(tokens[7] == .String);
+    switch (tokens[7]) {
+        .String => |str| {
+            try testing.expectEqualStrings("John", str.lexeme);
+        },
+        else => return error.TestUnexpectedToken,
+    }
+}
+
+// test "Lexer - comparison operators" {
+//     const input = "where age > 18 and salary >= 50000 OR dept <> 'HR'";
+//     var lexer = Lexer.init(input, testing.allocator);
+//     defer lexer.deinit();
+//
+//     const tokens = try lexer.tokenize();
+//
+//     try testing.expect(tokens[2] == .Symbol);
+//     switch (tokens[2]) {
+//         .Symbol => |sym| try testing.expectEqualStrings(">", sym.lexeme),
+//         else => return error.TestUnexpectedToken,
+//     }
+//
+//     try testing.expect(tokens[6] == .Symbol);
+//     switch (tokens[6]) {
+//         .Symbol => |sym| try testing.expectEqualStrings(">=", sym.lexeme),
+//         else => return error.TestUnexpectedToken,
+//     }
+//
+//     try testing.expect(tokens[11] == .Symbol);
+//     switch (tokens[11]) {
+//         .Symbol => |sym| try testing.expectEqualStrings("<>", sym.lexeme),
+//         else => return error.TestUnexpectedToken,
+//     }
+// }

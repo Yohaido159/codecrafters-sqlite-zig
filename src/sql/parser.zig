@@ -3,11 +3,23 @@ const assert = std.debug.assert;
 const Token = @import("./lexer.zig").Token;
 const Lexer = @import("./lexer.zig").Lexer;
 
+pub const Condition = struct {
+    column: []const u8,
+    operator: []const u8,
+    value: Value,
+};
+
+pub const Value = union(enum) {
+    Integer: i64,
+    Text: []const u8,
+};
+
 pub const TableOperation = union(enum) {
     Select: struct {
         functionName: ?[]const u8,
         tableName: []const u8,
         columnNames: ?std.ArrayList([]const u8),
+        condition: ?Condition,
     },
     CreateTable: struct { tableName: []const u8, fields: [](Field) },
 };
@@ -69,11 +81,20 @@ pub const Parser = struct {
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
             self.advance();
             try self.parseTableName();
+            self.advance();
+
+            var condition: ?Condition = null;
+            if (self.pos < self.tokens.len and self.checkKeywordToken(Token{ .Keyword = .{ .lexeme = "where" } })) {
+                try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "where" } });
+                self.advance();
+                condition = try self.parseCondition();
+            }
 
             return TableOperation{ .Select = .{
                 .columnNames = self.columnNames,
                 .tableName = self.tableName,
                 .functionName = null,
+                .condition = condition,
             } };
         } else if (self.checkKeywordToken(Token{ .Keyword = .{ .lexeme = "count" } })) {
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "count" } });
@@ -87,15 +108,61 @@ pub const Parser = struct {
             try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "from" } });
             self.advance();
             try self.parseTableName();
+            self.advance();
+
+            var condition: ?Condition = null;
+            if (self.pos < self.tokens.len and self.checkKeywordToken(Token{ .Keyword = .{ .lexeme = "where" } })) {
+                try self.expectKeywordToken(Token{ .Keyword = .{ .lexeme = "where" } });
+                self.advance();
+                condition = try self.parseCondition();
+            }
 
             return TableOperation{ .Select = .{
                 .columnNames = null,
                 .functionName = "count",
                 .tableName = self.tableName,
+                .condition = condition,
             } };
         } else {
             unreachable;
         }
+    }
+
+    fn parseCondition(self: *Parser) !Condition {
+        // Column name
+        const columnToken = self.getToken();
+        try self.expectIdentifierToken(columnToken);
+        const columnName = columnToken.Identifier.lexeme;
+        self.advance();
+
+        // Operator
+        const operatorToken = self.getToken();
+        try self.expectSymbolToken(operatorToken);
+        const operator = operatorToken.Symbol.lexeme;
+        self.advance();
+
+        // Value
+        const valueToken = self.getToken();
+        var value: Value = undefined;
+
+        switch (valueToken) {
+            .Integer => |int| {
+                value = Value{ .Integer = int.value };
+            },
+            .String => |str| {
+                value = Value{ .Text = str.lexeme };
+            },
+            else => {
+                return error.InvalidValueInWhereClause;
+            },
+        }
+        self.advance();
+
+        return Condition{
+            .column = columnName,
+            .operator = operator,
+            .value = value,
+        };
     }
 
     fn parseFieldNames(self: *Parser) !void {
@@ -220,7 +287,7 @@ pub const Parser = struct {
 const testing = std.testing;
 
 test "Parser - parse simple query" {
-    const input = "SELECT name FROM table";
+    const input = "select name from table";
     var lexer = Lexer.init(input, testing.allocator);
     defer lexer.deinit();
 
@@ -230,6 +297,27 @@ test "Parser - parse simple query" {
     var parser = try Parser.init(tokens, testing.allocator);
     defer parser.deinit();
     const result = try parser.parseQuery();
-    try testing.expectEqualStrings("name", result.columnNames.items[0]);
-    try testing.expectEqualStrings("table", result.tableName);
+    try testing.expectEqualStrings("name", result.Select.columnNames.?.items[0]);
+    try testing.expectEqualStrings("table", result.Select.tableName);
+    try testing.expect(result.Select.condition == null);
+}
+
+test "Parser - parse query with WHERE clause" {
+    const input = "select name from table where id = 5";
+    var lexer = Lexer.init(input, testing.allocator);
+    defer lexer.deinit();
+
+    const tokens = try lexer.tokenize();
+    try testing.expectEqual(@as(usize, 9), tokens.len); // 8 tokens + EOF
+
+    var parser = try Parser.init(tokens, testing.allocator);
+    defer parser.deinit();
+
+    const result = try parser.parseQuery();
+    try testing.expectEqualStrings("name", result.Select.columnNames.?.items[0]);
+    try testing.expectEqualStrings("table", result.Select.tableName);
+    try testing.expect(result.Select.condition != null);
+    try testing.expectEqualStrings("id", result.Select.condition.?.column);
+    try testing.expectEqualStrings("=", result.Select.condition.?.operator);
+    try testing.expectEqual(@as(i64, 5), result.Select.condition.?.value.Integer);
 }

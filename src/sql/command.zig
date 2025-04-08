@@ -3,6 +3,7 @@ const Lexer = @import("lexer.zig").Lexer;
 const Parser = @import("parser.zig").Parser;
 const Database = @import("../database.zig").Database;
 const TableOperation = @import("parser.zig").TableOperation;
+const Condition = @import("parser.zig").Condition;
 
 pub fn Command() type {
     return struct {
@@ -38,7 +39,8 @@ pub fn Command() type {
                 .Select => |select| {
                     const tableName = select.tableName;
                     const columnNames = select.columnNames;
-                    const rows = try self.exectuteSelectQuery(tableName, columnNames);
+                    const condition = select.condition;
+                    const rows = try self.exectuteSelectQuery(tableName, columnNames, condition);
                     for (rows) |row| {
                         for (row.columns.items, 0..) |col, idx| {
                             if (idx > 0) {
@@ -68,13 +70,22 @@ pub fn Command() type {
             }
         }
 
-        pub fn exectuteSelectQuery(self: *Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8)) ![](Row) {
+        pub fn exectuteSelectQuery(self: *Self, tableName: []const u8, columnNames: ?std.ArrayList([]const u8), condition: ?Condition) ![](Row) {
             var queryInfo = try self.db.getQueryInfo(TableOperation{ .Select = .{
                 .tableName = tableName,
                 .columnNames = columnNames.?,
                 .functionName = null,
+                .condition = null,
             } });
             defer queryInfo.deinit();
+
+            var nameToIndex = try self.db.nameToIndex(TableOperation{ .Select = .{
+                .tableName = tableName,
+                .columnNames = columnNames.?,
+                .functionName = null,
+                .condition = null,
+            } });
+            defer nameToIndex.deinit();
 
             var nameSet = std.StringHashMap(u8).init(self.allocator);
             defer nameSet.deinit();
@@ -100,12 +111,33 @@ pub fn Command() type {
                 while (rowMutable.next()) |column_data| {
                     const columnName = queryInfo.get(index);
                     const has = nameSet.get(columnName.?);
+                    _ = has; // autofix
 
-                    if (has == 1) {
-                        try row.columns.append(try self.allocator.dupe(u8, column_data));
-                    }
+                    // if (has == 1) {
+                    try row.columns.append(try self.allocator.dupe(u8, column_data));
+                    // }
 
                     index += 1;
+                }
+
+                if (condition) |cond| {
+                    const columnName = cond.column;
+
+                    const columnIndex = nameToIndex.get(columnName);
+                    const colValue = row.columns.items[columnIndex.?];
+                    if (std.mem.eql(u8, colValue, cond.value.Text)) {} else {
+                        continue;
+                    }
+                }
+
+                for (row.columns.items, 0..) |_, idx| {
+                    const colName = queryInfo.get(idx);
+                    const has = nameSet.get(colName.?);
+
+                    if (has == null or has.? == 0) {
+                        const indexInner = nameToIndex.get(colName.?);
+                        _ = row.columns.orderedRemove(indexInner.? -| 1);
+                    }
                 }
                 try rows.append(row);
             }

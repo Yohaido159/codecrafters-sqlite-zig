@@ -39,6 +39,9 @@ pub const Database = struct {
     pub fn getQueryInfo(self: *Database, query: TableOperation) !std.AutoHashMap(usize, []const u8) {
         return try self.systemTable.getQueryInfo(query);
     }
+    pub fn nameToIndex(self: *Database, query: TableOperation) !std.StringHashMap(usize) {
+        return try self.systemTable.nameToIndex(query);
+    }
 };
 
 pub const SystemTable = struct {
@@ -82,6 +85,38 @@ pub const SystemTable = struct {
                 defer self.allocator.free(resultSql.CreateTable.fields);
                 for (resultSql.CreateTable.fields, 0..) |field, column_index| {
                     try result.put(column_index, field.name);
+                }
+            }
+        }
+
+        return try result.clone();
+    }
+
+    pub fn nameToIndex(self: *Self, query: TableOperation) !std.StringHashMap(usize) {
+        assert(query == TableOperation.Select);
+        const querySelect = query.Select;
+
+        const pageZero = self.pageZero;
+        const allocator = self.allocator;
+
+        var result = std.StringHashMap(usize).init(allocator);
+        defer result.deinit();
+
+        for (pageZero.cells) |cell| {
+            const sqlite_row = try SqliteSchemaRow.init(cell.content);
+            if (std.mem.eql(u8, sqlite_row.body.table_name, querySelect.tableName)) {
+                var lexerSql = Lexer.init(sqlite_row.body.sql, allocator);
+                defer lexerSql.deinit();
+
+                const tokensSql = try lexerSql.tokenize();
+
+                var parserSql = try Parser.init(tokensSql, allocator);
+                defer parserSql.deinit();
+
+                const resultSql = try parserSql.parseQuery();
+                defer self.allocator.free(resultSql.CreateTable.fields);
+                for (resultSql.CreateTable.fields, 0..) |field, column_index| {
+                    try result.put(field.name, column_index);
                 }
             }
         }
